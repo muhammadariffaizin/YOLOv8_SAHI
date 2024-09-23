@@ -5,15 +5,23 @@ from validation_sahi import run_sahi_validation, run_basic_validation, LOGGER
 from inference_sahi import run_sahi_prediction, run_basic_prediction
 import torch
 
+def parse_args():
+    import argparse
+    parser = argparse.ArgumentParser(description='Ultralytics YOLOv5')
+    parser.add_argument('--weights', type=str, default='yolov5s.pt', help='model.pt path(s)')
+    parser.add_argument('--imgsz', '--img', '--img-size', type=int, default=640, help='inference size (pixels)')
+    parser.add_argument('--conf-file', type=str, default='data/coco.yaml', help='hyp.yaml file path')
+    parser.add_argument('--source', type=str, default='data/images', help='source')  # file/folder, 0 for webcam
+
 def main():
     warnings.filterwarnings("ignore")
-    # here set your parameters
-    pt_model = './yolov8n.pt'
-    yaml_datapath = './sahi_data.yaml' # for validation
-    imgsz = (640*2, 640*2) # for sahi validation or prediction in HW format. Set None for dynamic input for prediction (each image will be processed with original size)
-    predict_source = './yolo_dataset/images'
-    video1_source = './metadata/1.mp4'
-
+    
+    # parse arguments
+    args = parse_args()
+    weights = args.weights
+    imgsz = args.imgsz
+    yaml_datapath = args.conf_file
+    predict_source = args.source
 
     # defaults params
     args = get_cfg(cfg=DEFAULT_CFG)
@@ -21,12 +29,12 @@ def main():
     LOGGER.info(f'DEVICE ===>> {device}')
 
     # VALIDATION
-    run_basic_validation(pt_model, yaml_datapath, args, imgsz)
-    run_sahi_validation(pt_model, yaml_datapath,  args, imgsz)
+    print(run_basic_validation(weights, yaml_datapath, args, imgsz))
+    print(run_sahi_validation(weights, yaml_datapath, args, imgsz))
 
     # PREDICTION (INFERENCE)
-    run_sahi_prediction(args, pt_model, source = predict_source, imgsz = imgsz)
-    run_basic_prediction(pt_model=pt_model, args = args, source=predict_source)
+    run_sahi_prediction(args, weights, source = predict_source, imgsz = imgsz)
+    run_basic_prediction(pt_model=weights, args = args, source=predict_source)
 
 if __name__ == '__main__':
     main()

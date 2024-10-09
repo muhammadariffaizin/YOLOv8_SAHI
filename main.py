@@ -9,10 +9,10 @@ def parse_args():
     import argparse
     parser = argparse.ArgumentParser(description='Ultralytics YOLOv5')
     parser.add_argument('--weights', type=str, default='yolov5s.pt', help='model.pt path(s)')
-    parser.add_argument('--imgsz', '--img', '--img-size', type=int, default=640, help='inference size (pixels)')
+    parser.add_argument('--imgsz', '--img', '--img-size', type=int, help='inference size (pixels)')
     parser.add_argument('--conf-file', type=str, default='data/coco.yaml', help='hyp.yaml file path')
     parser.add_argument('--source', type=str, default='data/images', help='source')  # file/folder, 0 for webcam
-    parser.add_argument('--mode', type=str, default='predict', help='select mode for valid or predict', list=['valid', 'predict'])  
+    parser.add_argument('--mode', type=str, default='predict', help='select mode for valid or predict', choices=['predict', 'valid'])
 
     return parser.parse_args()
 
@@ -22,21 +22,25 @@ def main():
     # parse arguments
     args = parse_args()
     weights = args.weights
-    imgsz = (args.imgsz, args.imgsz)
+    if args.imgsz == None:
+        imgsz = None
+    else:
+        imgsz = (args.imgsz, args.imgsz) # (height, width) tuple
     yaml_datapath = args.conf_file
     predict_source = args.source
 
     # defaults params
-    args = get_cfg(cfg=DEFAULT_CFG)
+    config = get_cfg(cfg=DEFAULT_CFG)
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
     LOGGER.info(f'DEVICE ===>> {device}')
+    print(imgsz)
 
     if args.mode == 'valid':
-        print(run_basic_validation(weights, yaml_datapath, args, imgsz))
-        print(run_sahi_validation(weights, yaml_datapath, args, imgsz))
+        print(run_basic_validation(weights, yaml_datapath, config, imgsz))
+        print(run_sahi_validation(weights, yaml_datapath, config, imgsz))
     elif args.mode == 'predict':
-        run_basic_prediction(args=args, pt_model=weights, source=predict_source)
-        run_sahi_prediction(args=args, pt_model=weights, source=predict_source, imgsz=imgsz)
+        run_basic_prediction(args=config, pt_model=weights, source=predict_source)
+        run_sahi_prediction(args=config, pt_model=weights, source=predict_source, imgsz=imgsz)
 
 if __name__ == '__main__':
     main()

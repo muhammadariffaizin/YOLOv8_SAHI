@@ -158,7 +158,8 @@ class DetectionValidator_SAHI(DetectionValidator):
         if self.training:
             self.device = trainer.device
             self.data = trainer.data
-            self.args.half = self.device.type != 'cpu'  # force FP16 val during training
+            # force FP16 val during training
+            self.args.half = self.device.type != 'cpu'
             model = trainer.ema.ema or trainer.model
             model = model.half() if self.args.half else model.float()
             # self.model = model
@@ -167,11 +168,13 @@ class DetectionValidator_SAHI(DetectionValidator):
             model.eval()
         else:
             callbacks.add_integration_callbacks(self)
-            model = AutoBackend(model or self.args.model,
-                                device=select_device(self.args.device, self.args.batch),
-                                dnn=self.args.dnn,
-                                data=self.args.data,
-                                fp16=self.args.half)
+            model = AutoBackend(
+                model or self.args.model,
+                device=select_device(self.args.device, self.args.batch),
+                dnn=self.args.dnn,
+                data=self.args.data,
+                fp16=self.args.half,
+            )
             # self.model = model
             self.device = model.device  # update device
             self.args.half = model.fp16  # update half
@@ -289,6 +292,7 @@ class DetectionValidator_SAHI(DetectionValidator):
             with dt[2]:
                 if self.training:
                     self.loss += model.loss(batch, preds)[1]
+
             # Postprocess
             with dt[3]:
                 if not self.usual_inference:

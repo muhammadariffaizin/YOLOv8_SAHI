@@ -1,5 +1,4 @@
-from utils import *
-
+from utils_sahi import *
 
 def run_basic_validation(pt_model, yaml_datapath, args, imgsz):
     validator = compile_validator(args=args, pt_modelpath=pt_model, imgsz=imgsz, yaml_datapath=yaml_datapath,

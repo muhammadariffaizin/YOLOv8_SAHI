@@ -1,24 +1,3 @@
-# Ultralytics YOLOv5 🚀, AGPL-3.0 license
-"""
-Validate a trained YOLOv5 detection model on a detection dataset.
-
-Usage:
-    $ python val.py --weights yolov5s.pt --data coco128.yaml --img 640
-
-Usage - formats:
-    $ python val.py --weights yolov5s.pt                 # PyTorch
-                              yolov5s.torchscript        # TorchScript
-                              yolov5s.onnx               # ONNX Runtime or OpenCV DNN with --dnn
-                              yolov5s_openvino_model     # OpenVINO
-                              yolov5s.engine             # TensorRT
-                              yolov5s.mlpackage          # CoreML (macOS-only)
-                              yolov5s_saved_model        # TensorFlow SavedModel
-                              yolov5s.pb                 # TensorFlow GraphDef
-                              yolov5s.tflite             # TensorFlow Lite
-                              yolov5s_edgetpu.tflite     # TensorFlow Edge TPU
-                              yolov5s_paddle_model       # PaddlePaddle
-"""
-
 import argparse
 import json
 import os
@@ -35,12 +14,6 @@ ROOT = FILE.parents[0]  # YOLOv5 root directory
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
-
-SLICE_H = 640 # any multiple by 32 number
-SLICE_W = 640
-OVERLAP_HEIGHT_RATIO = 0.2
-OVERLAP_WIDTH_RATIO = 0.2
-VERBOSE_SAHI = 0
 
 from models.common import DetectMultiBackend
 from utils.callbacks import Callbacks
@@ -65,13 +38,9 @@ from utils.metrics import ConfusionMatrix, ap_per_class
 from utils.plots import output_to_target, plot_images, plot_val_study
 from utils.torch_utils import select_device, smart_inference_mode
 from validator import BaseValidator
+from predictor import BasePredictor
 
-from yolov5 import DetectionValidator, DetectionPredictor
-from sahi.slicing import get_slice_bboxes
-from sahi import AutoDetectionModel
-from sahi.predict import get_sliced_prediction
-
-class DetectionValidator_SAHI(BaseValidator):
+class DetectionValidator(BaseValidator):
     def __init__(self, data="data/coco128.yaml", weights="yolov5s.pt", batch_size=32, imgsz=640, conf_thres=0.001, iou_thres=0.6,
                  max_det=300, task="val", device="", workers=8, single_cls=False, augment=False, verbose=False,
                  save_txt=False, save_hybrid=False, save_conf=False, save_json=False, project="runs/val",
@@ -394,92 +363,6 @@ class DetectionValidator_SAHI(BaseValidator):
             maps[c] = ap[i]
         return (mp, mr, map50, map, *(loss.cpu() / len(dataloader)).tolist()), maps, t
     
-class DetectionPredictor_SAHI:
-    def __init__(self, args):
-        self.args = args
-        self.model = None
-        self.save_dir = None
-        self.device = None
-        self.imgsz = None
-
-def compile_validator(args, pt_modelpath, yaml_datapath, save_dir, imgsz = None, sahi = False, usual_inference=True):
-    args.model = pt_modelpath
-    args.data = yaml_datapath
-    args.imgsz = imgsz
-
-    validator = DetectionValidator_SAHI(args=args,save_dir=save_dir) if sahi else DetectionValidator(args=args,save_dir=save_dir)
-    validator.is_coco = False
-    validator.training = False
-
-    model = torch.hub.load('ultralytics/yolov5', 'custom', path=validator.args.model, force_reload=True)
-
-    # Apply half precision if requested
-    model.half() if validator.args.half else model.float()
-
-    # Set validator parameters
-    validator.names = model.names
-    validator.nc = len(model.names)
-
-    # Load dataset configuration
-    validator.data = check_dataset(validator.args.data)
-
-    # Inference modes
-    validator.sahi = sahi
-    validator.usual_inference = usual_inference
-
-    # Set metrics
-    validator.metrics.names = validator.names
-    validator.metrics.plot = validator.args.plots
-
-    validator.stride = model.stride
-    LOGGER.info(f'\nValidator {"SAHI" if sahi else ""} compiled successfully!')
-    return validator
-
-def compile_predictor(args, pt_modelpath, save_dir, iou_thr = 0.5, conf = 0.5, imgsz = None, sahi = False, usual_inference = True):
-    args.iou = iou_thr
-    args.conf = conf
-    args.model = pt_modelpath
-    args.sahi = sahi
-    args.usual_inference = usual_inference
-    args.sahi_imgsz = imgsz
-    args.dynamic_input = True if imgsz is None else False
-
-    predictor = DetectionPredictor_SAHI(args = args) if sahi else DetectionPredictor()
-    # predictor.model = pt_modelpath
-    predictor.save_dir = save_dir
-    # predictor.device = device
-    # predictor.imgsz = imgsz
-    # predictor.args.imgsz
-
-    return predictor
-
-def sahi_predict(detection_model, image_batch, slice_height = SLICE_H, slice_width = SLICE_W, \
-                 overlap_height_ratio = OVERLAP_HEIGHT_RATIO, overlap_width_ratio = OVERLAP_WIDTH_RATIO):
-    """
-    detection_model : compiled from def get_sahi_model()
-    image_batch : torch.Size([10, 3, 1280, 1280])
-    """
-    device_orig = detection_model.model.device
-    batch_result = []
-    for image in image_batch:
-        box_annot = np.empty((0, 6)) #
-        if isinstance(image,  torch.Tensor):
-            image = image.cpu().numpy() * 255
-            image = np.transpose(image, (1, 2, 0)).astype(np.uint8) # in CHW
-
-        result = get_sliced_prediction(
-            image,
-            detection_model,
-            slice_height=slice_height,
-            slice_width=slice_width,
-            overlap_height_ratio=overlap_height_ratio,
-            overlap_width_ratio=overlap_width_ratio,
-            verbose = VERBOSE_SAHI
-        )
-        for img_box in result.object_prediction_list:
-            x1, y1, x2, y2 = img_box.bbox.to_xyxy()
-            confidence = img_box.score.value
-            cls = img_box.category.id
-            box_annot = np.concatenate((box_annot, [[x1, y1, x2, y2, confidence, cls]]))
-        batch_result.append(torch.tensor(box_annot).to(device_orig))
-    return batch_result
+class DetectionPredictor(BasePredictor):
+    def __init__():
+        pass

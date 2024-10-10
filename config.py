@@ -68,7 +68,7 @@ CFG_FLOAT_KEYS = {  # integer or float arguments, i.e. x=2 and x=2.0
     "shear",
     "time",
     "workspace",
-    "batch",
+    "batch_size",
 }
 CFG_FRACTION_KEYS = {  # fractional float arguments with 0.0<=values<=1.0
     "dropout",
@@ -91,8 +91,8 @@ CFG_FRACTION_KEYS = {  # fractional float arguments with 0.0<=values<=1.0
     "mosaic",
     "mixup",
     "copy_paste",
-    "conf",
-    "iou",
+    "conf_thres",
+    "iou_thres",
     "fraction",
 }
 CFG_INT_KEYS = {  # integer-only arguments

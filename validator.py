@@ -9,60 +9,15 @@ from utils.general import (
 )
 
 from utils.metrics import box_iou
+from utils.callbacks import Callbacks
 
 class BaseValidator:
-    def __init__(self, data="data/coco128.yaml", weights="yolov5s.pt", batch_size=32, imgsz=640, conf_thres=0.001, iou_thres=0.6,
-                 max_det=300, task="val", device="", workers=8, single_cls=False, augment=False, verbose=False,
-                 save_txt=False, save_hybrid=False, save_conf=False, save_json=False, project="runs/val",
-                 name="exp", exist_ok=False, half=False, dnn=False):
-        self.data = data
-        self.weights = [weights] if isinstance(weights, str) else weights
-        self.batch_size = batch_size
-        self.imgsz = imgsz
-        self.conf_thres = conf_thres
-        self.iou_thres = iou_thres
-        self.max_det = max_det
-        self.task = task
-        self.device = device
-        self.workers = workers
-        self.single_cls = single_cls
-        self.augment = augment
-        self.verbose = verbose
-        self.save_txt = save_txt
-        self.save_hybrid = save_hybrid
-        self.save_conf = save_conf
-        self.save_json = save_json
-        self.project = project
-        self.name = name
-        self.exist_ok = exist_ok
-        self.half = half
-        self.dnn = dnn
-
-        # Initialize the model here if needed (e.g., torch.load weights, etc.)
-        self.opt = {
-            'data': self.data,
-            'weights': self.weights,
-            'batch_size': self.batch_size,
-            'imgsz': self.imgsz,
-            'conf_thres': self.conf_thres,
-            'iou_thres': self.iou_thres,
-            'max_det': self.max_det,
-            'task': self.task,
-            'device': self.device,
-            'workers': self.workers,
-            'single_cls': self.single_cls,
-            'augment': self.augment,
-            'verbose': self.verbose,
-            'save_txt': self.save_txt,
-            'save_hybrid': self.save_hybrid,
-            'save_conf': self.save_conf,
-            'save_json': self.save_json,
-            'project': self.project,
-            'name': self.name,
-            'exist_ok': self.exist_ok,
-            'half': self.half,
-            'dnn': self.dnn
-        }
+    def __init__(self, args=None, data="data/coco128.yaml", model=None, dataloader=None):
+        self.args = args
+        self.callbacks = Callbacks()
+        self.model = model
+        self.dataloader = dataloader
+        self.save_dir = Path("")
 
         self._validate_options()
 

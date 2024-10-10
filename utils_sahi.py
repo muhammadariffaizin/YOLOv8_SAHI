@@ -80,7 +80,20 @@ class DetectionValidator_SAHI(BaseValidator):
         self.dataloader = dataloader
         self.save_dir = Path("")
 
-    def __call__(self):
+    def run_model(self, plots=True):
+        """
+        Run the model with the current options.
+
+        Args:
+            plots (bool): Whether or not to generate plots.
+        """
+        # Here the actual model inference logic goes, for example:
+        # model = torch.load(self.weights[0])
+        # result = model(img)
+        LOGGER.info("Model running with the following options:")
+        for k, v in self.args.items():
+            LOGGER.info(f"{k}: {v}")
+
         # Initialize/load model and set device
         training = self.model is not None
         if training:  # called by train.py
@@ -191,7 +204,7 @@ class DetectionValidator_SAHI(BaseValidator):
                 if npr == 0:
                     if nl:
                         stats.append((correct, *torch.zeros((2, 0), device=device), labels[:, 0]))
-                        if self.args.plots:
+                        if plots:
                             confusion_matrix.process_batch(detections=None, labels=labels[:, 0])
                     continue
 
@@ -207,7 +220,7 @@ class DetectionValidator_SAHI(BaseValidator):
                     scale_boxes(im[si].shape[1:], tbox, shape, shapes[si][1])  # native-space labels
                     labelsn = torch.cat((labels[:, 0:1], tbox), 1)  # native-space labels
                     correct = self._process_batch(predn, labelsn, iouv)
-                    if self.args.plots:
+                    if plots:
                         confusion_matrix.process_batch(predn, labelsn)
                 stats.append((correct, pred[:, 4], pred[:, 5], labels[:, 0]))  # (correct, conf, pcls, tcls)
 
@@ -220,7 +233,7 @@ class DetectionValidator_SAHI(BaseValidator):
                 self.callbacks.run("on_val_image_end", pred, predn, path, names, im[si])
 
             # Plot images
-            if self.args.plots and batch_i < 3:
+            if plots and batch_i < 3:
                 plot_images(im, targets, paths, save_dir / f"val_batch{batch_i}_labels.jpg", names)  # labels
                 plot_images(im, output_to_target(preds), paths, save_dir / f"val_batch{batch_i}_pred.jpg", names)  # pred
 
@@ -229,7 +242,7 @@ class DetectionValidator_SAHI(BaseValidator):
         # Compute metrics
         stats = [torch.cat(x, 0).cpu().numpy() for x in zip(*stats)]  # to numpy
         if len(stats) and stats[0].any():
-            tp, fp, p, r, f1, ap, ap_class = ap_per_class(*stats, plot=self.args.plots, save_dir=save_dir, names=names)
+            tp, fp, p, r, f1, ap, ap_class = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names)
             ap50, ap = ap[:, 0], ap.mean(1)  # AP@0.5, AP@0.5:0.95
             mp, mr, map50, map = p.mean(), r.mean(), ap50.mean(), ap.mean()
         nt = np.bincount(stats[3].astype(int), minlength=nc)  # number of targets per class
@@ -252,7 +265,7 @@ class DetectionValidator_SAHI(BaseValidator):
             LOGGER.info(f"Speed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {shape}" % t)
 
         # Plots
-        if self.args.plots:
+        if plots:
             confusion_matrix.plot(save_dir=save_dir, names=list(names.values()))
             self.callbacks.run("on_val_end", nt, tp, fp, p, r, f1, ap, ap50, ap_class, confusion_matrix)
 

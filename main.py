@@ -36,8 +36,8 @@ def main():
     print(imgsz)
 
     if args.mode == 'valid':
-        print(run_basic_validation(weights, yaml_datapath, config, imgsz))
-        print(run_sahi_validation(weights, yaml_datapath, config, imgsz))
+        print(run_basic_validation(pt_model=weights, yaml_datapath=yaml_datapath, args=config, imgsz=imgsz))
+        print(run_sahi_validation(pt_model=weights, yaml_datapath=yaml_datapath, args=config, imgsz=imgsz))
     elif args.mode == 'predict':
         run_basic_prediction(args=config, pt_model=weights, source=predict_source)
         run_sahi_prediction(args=config, pt_model=weights, source=predict_source, imgsz=imgsz)

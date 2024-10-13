@@ -37,8 +37,15 @@ from utils.metrics import box_iou
 from utils.callbacks import Callbacks
 from validator import BaseValidator
 
+FILE = Path(__file__).resolve()
+ROOT = FILE.parents[0]  # YOLOv5 root directory
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))  # add ROOT to PATH
+ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
+
 class DetectionValidator(BaseValidator):
     def __init__(self, args=None, save_dir=Path(""), model=None, dataloader=None):
+        super().__init__(args, save_dir)
         self.args = args
         self.callbacks = Callbacks()
         self.model = model
@@ -57,6 +64,9 @@ class DetectionValidator(BaseValidator):
             LOGGER.warning("WARNING ⚠️ --save-hybrid will return high mAP from hybrid labels, not from predictions alone")
         self.args.save_json |= self.args.data.endswith("coco.yaml")
         self.args.save_txt |= self.args.save_hybrid
+
+        if not self.args.project:
+            self.args.project = ROOT / "runs/val"  # default project dir
 
     def run_task(self):
         """
@@ -118,7 +128,7 @@ class DetectionValidator(BaseValidator):
         # model = torch.load(self.weights[0])
         # result = model(img)
         LOGGER.info("Model running with the following options:")
-        for k, v in self.args.items():
+        for k, v in self.args.__dict__.items():
             LOGGER.info(f"{k}: {v}")
 
         # Initialize/load model and set device
@@ -128,30 +138,30 @@ class DetectionValidator(BaseValidator):
             half &= device.type != "cpu"  # half precision only supported on CUDA
             self.model.half() if half else self.model.float()
         else:  # called directly
-            device = select_device(self.args.device, batch_size=batch_size)
+            device = select_device(self.args.device, batch_size=self.args.batch_size)
 
             # Directories
             save_dir = increment_path(Path(self.args.project) / self.args.name, exist_ok=self.args.exist_ok)  # increment run
             (save_dir / "labels" if self.args.save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
             # Load model
-            model = DetectMultiBackend(self.args.weights, device=device, dnn=self.args.dnn, data=self.args.data, fp16=self.args.half)
-            stride, pt, jit, engine = model.stride, model.pt, model.jit, model.engine
+            self.model = DetectMultiBackend(self.args.weights, device=device, dnn=self.args.dnn, data=self.args.data, fp16=self.args.half)
+            stride, pt, jit, engine = self.model.stride, self.model.pt, self.model.jit, self.model.engine
             imgsz = check_img_size(self.args.imgsz, s=stride)  # check image size
-            half = model.fp16  # FP16 supported on limited backends with CUDA
+            half = self.model.fp16  # FP16 supported on limited backends with CUDA
             if engine:
-                batch_size = model.batch_size
+                batch_size = self.model.batch_size
             else:
-                device = model.device
+                device = self.model.device
                 if not (pt or jit):
                     batch_size = 1  # export.py models default to batch-size 1
                     LOGGER.info(f"Forcing --batch-size 1 square inference (1,3,{imgsz},{imgsz}) for non-PyTorch models")
 
             # Data
-            data = check_dataset(data)  # check
+            data = check_dataset(self.data)  # check
 
         # Configure
-        model.eval()
+        self.model.eval()
         cuda = device.type != "cpu"
         is_coco = isinstance(data.get("val"), str) and data["val"].endswith(f"coco{os.sep}val2017.txt")  # COCO dataset
         nc = 1 if self.args.single_cls else int(data["nc"])  # number of classes
@@ -161,12 +171,13 @@ class DetectionValidator(BaseValidator):
         # Dataloader
         if not training:
             if pt and not self.args.single_cls:  # check --weights are trained on --data
-                ncm = model.model.nc
+                ncm = self.model.model.nc
+                print(self.model.model.nc)
                 assert ncm == nc, (
                     f"{self.args.weights} ({ncm} classes) trained on different --data than what you passed ({nc} "
                     f"classes). Pass correct combination of --weights and --data that are trained together."
                 )
-            model.warmup(imgsz=(1 if pt else batch_size, 3, imgsz, imgsz))  # warmup
+            self.model.warmup(imgsz=(1 if pt else batch_size, 3, imgsz, imgsz))  # warmup
             pad, rect = (0.0, False) if task == "speed" else (0.5, pt)  # square inference for benchmarks
             task = task if task in ("train", "val", "test") else "val"  # path to train/val/test images
             dataloader = create_dataloader(
@@ -183,7 +194,7 @@ class DetectionValidator(BaseValidator):
 
         seen = 0
         confusion_matrix = ConfusionMatrix(nc=nc)
-        names = model.names if hasattr(model, "names") else model.module.names  # get class names
+        names = self.model.names if hasattr(self.model, "names") else self.model.module.names  # get class names
         if isinstance(names, (list, tuple)):  # old format
             names = dict(enumerate(names))
         class_map = coco80_to_coco91_class() if is_coco else list(range(1000))
@@ -206,7 +217,7 @@ class DetectionValidator(BaseValidator):
 
             # Inference
             with dt[1]:
-                preds, train_out = model(im) if self.args.compute_loss else (model(im, augment=self.args.augment), None)
+                preds, train_out = self.model(im) if self.args.compute_loss else (self.model(im, augment=self.args.augment), None)
 
             # Loss
             if self.args.compute_loss:
@@ -325,7 +336,7 @@ class DetectionValidator(BaseValidator):
                 LOGGER.info(f"pycocotools unable to run: {e}")
 
         # Return results
-        model.float()  # for training
+        self.model.float()  # for training
         if not training:
             s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if self.args.save_txt else ""
             LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}{s}")

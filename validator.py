@@ -37,6 +37,12 @@ from utils.torch_utils import select_device, smart_inference_mode
 from utils.metrics import box_iou, DetMetrics
 from utils.callbacks import Callbacks
 
+FILE = Path(__file__).resolve()
+ROOT = FILE.parents[0]  # YOLOv5 root directory
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))  # add ROOT to PATH
+ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
+
 class BaseValidator:
     def __init__(self, args=None, save_dir=Path(""), model=None, dataloader=None):
         self.args = args
@@ -56,6 +62,9 @@ class BaseValidator:
 
         self._validate_options()
 
+    def __call__(self):
+        self.run_task()
+
     def _validate_options(self):
         """
         Validates and adjusts the configuration options.
@@ -66,6 +75,9 @@ class BaseValidator:
             LOGGER.warning("WARNING ⚠️ --save-hybrid will return high mAP from hybrid labels, not from predictions alone")
         self.args.save_json |= self.args.data.endswith("coco.yaml")
         self.args.save_txt |= self.args.save_hybrid
+
+        if not self.args.project:
+            self.args.project = ROOT / "runs/val"  # default project dir
 
     def run_task(self):
         """
@@ -127,7 +139,7 @@ class BaseValidator:
         # model = torch.load(self.weights[0])
         # result = model(img)
         LOGGER.info("Model running with the following options:")
-        for k, v in self.args.items():
+        for k, v in self.args.__dict__.items():
             LOGGER.info(f"{k}: {v}")
 
         # Initialize/load model and set device

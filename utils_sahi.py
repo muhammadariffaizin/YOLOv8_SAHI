@@ -72,13 +72,14 @@ from sahi import AutoDetectionModel
 from sahi.predict import get_sliced_prediction
 
 class DetectionValidator_SAHI(BaseValidator):
-    def __init__(self, args=None, data="data/coco128.yaml", model=None, dataloader=None):
-        super().__init__(data, args)
+    def __init__(self, args=None, save_dir=Path(""), model=None, dataloader=None):
+        super().__init__(args, save_dir)
         self.args = args
         self.callbacks = Callbacks()
         self.model = model
         self.dataloader = dataloader
-        self.save_dir = Path("")
+        self.save_dir = save_dir
+        
 
     def run_model(self, plots=True):
         """

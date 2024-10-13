@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import time
 import subprocess
 import sys
 from pathlib import Path
@@ -33,16 +34,25 @@ from utils.metrics import ConfusionMatrix, ap_per_class
 from utils.plots import output_to_target, plot_images, plot_val_study
 from utils.torch_utils import select_device, smart_inference_mode
 
-from utils.metrics import box_iou
+from utils.metrics import box_iou, DetMetrics
 from utils.callbacks import Callbacks
 
 class BaseValidator:
-    def __init__(self, args=None, model=None, dataloader=None):
+    def __init__(self, args=None, save_dir=Path(""), model=None, dataloader=None):
         self.args = args
         self.callbacks = Callbacks()
         self.model = model
         self.dataloader = dataloader
-        self.save_dir = Path("")
+        self.save_dir = save_dir
+
+        self.is_coco = False
+        self.nc = 0
+        self.iouv = None
+        self.niou = 0
+        self.cuda = False
+
+        self.plots = {}
+        self.metrics = DetMetrics(save_dir=self.save_dir, on_plot=self.on_plot)
 
         self._validate_options()
 
@@ -54,7 +64,7 @@ class BaseValidator:
             LOGGER.warning(f"WARNING ⚠️ confidence threshold {self.args.conf_thres} > 0.001 produces invalid results")
         if self.args.save_hybrid:
             LOGGER.warning("WARNING ⚠️ --save-hybrid will return high mAP from hybrid labels, not from predictions alone")
-        self.args.save_json |= self.data.endswith("coco.yaml")
+        self.args.save_json |= self.args.data.endswith("coco.yaml")
         self.args.save_txt |= self.args.save_hybrid
 
     def run_task(self):
@@ -151,18 +161,18 @@ class BaseValidator:
 
         # Configure
         model.eval()
-        cuda = device.type != "cpu"
-        is_coco = isinstance(data.get("val"), str) and data["val"].endswith(f"coco{os.sep}val2017.txt")  # COCO dataset
-        nc = 1 if self.args.single_cls else int(data["nc"])  # number of classes
-        iouv = torch.linspace(0.5, 0.95, 10, device=device)  # iou vector for mAP@0.5:0.95
-        niou = iouv.numel()
+        self.cuda = device.type != "cpu"
+        self.is_coco = isinstance(data.get("val"), str) and data["val"].endswith(f"coco{os.sep}val2017.txt")  # COCO dataset
+        self.nc = 1 if self.args.single_cls else int(data["nc"])  # number of classes
+        self.iouv = torch.linspace(0.5, 0.95, 10, device=device)  # iou vector for mAP@0.5:0.95
+        self.niou = self.iouv.numel()
 
         # Dataloader
         if not training:
             if pt and not self.args.single_cls:  # check --weights are trained on --data
                 ncm = model.model.nc
-                assert ncm == nc, (
-                    f"{self.args.weights} ({ncm} classes) trained on different --data than what you passed ({nc} "
+                assert ncm == self.nc, (
+                    f"{self.args.weights} ({ncm} classes) trained on different --data than what you passed ({self.nc} "
                     f"classes). Pass correct combination of --weights and --data that are trained together."
                 )
             model.warmup(imgsz=(1 if pt else batch_size, 3, imgsz, imgsz))  # warmup
@@ -181,11 +191,11 @@ class BaseValidator:
             )[0]
 
         seen = 0
-        confusion_matrix = ConfusionMatrix(nc=nc)
+        confusion_matrix = ConfusionMatrix(nc=self.nc)
         names = model.names if hasattr(model, "names") else model.module.names  # get class names
         if isinstance(names, (list, tuple)):  # old format
             names = dict(enumerate(names))
-        class_map = coco80_to_coco91_class() if is_coco else list(range(1000))
+        class_map = coco80_to_coco91_class() if self.is_coco else list(range(1000))
         s = ("%22s" + "%11s" * 6) % ("Class", "Images", "Instances", "P", "R", "mAP50", "mAP50-95")
         tp, fp, p, r, f1, mp, mr, map50, ap50, map = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
         dt = Profile(device=device), Profile(device=device), Profile(device=device)  # profiling times
@@ -196,7 +206,7 @@ class BaseValidator:
         for batch_i, (im, targets, paths, shapes) in enumerate(pbar):
             self.callbacks.run("on_val_batch_start")
             with dt[0]:
-                if cuda:
+                if self.cuda:
                     im = im.to(device, non_blocking=True)
                     targets = targets.to(device)
                 im = im.half() if half else im.float()  # uint8 to fp16/32
@@ -224,7 +234,7 @@ class BaseValidator:
                 labels = targets[targets[:, 0] == si, 1:]
                 nl, npr = labels.shape[0], pred.shape[0]  # number of labels, predictions
                 path, shape = Path(paths[si]), shapes[si][0]
-                correct = torch.zeros(npr, niou, dtype=torch.bool, device=device)  # init
+                correct = torch.zeros(npr, self.niou, dtype=torch.bool, device=device)  # init
                 seen += 1
 
                 if npr == 0:
@@ -245,7 +255,7 @@ class BaseValidator:
                     tbox = xywh2xyxy(labels[:, 1:5])  # target boxes
                     scale_boxes(im[si].shape[1:], tbox, shape, shapes[si][1])  # native-space labels
                     labelsn = torch.cat((labels[:, 0:1], tbox), 1)  # native-space labels
-                    correct = self._process_batch(predn, labelsn, iouv)
+                    correct = self._process_batch(predn, labelsn, self.iouv)
                     if plots:
                         confusion_matrix.process_batch(predn, labelsn)
                 stats.append((correct, pred[:, 4], pred[:, 5], labels[:, 0]))  # (correct, conf, pcls, tcls)
@@ -271,7 +281,7 @@ class BaseValidator:
             tp, fp, p, r, f1, ap, ap_class = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names)
             ap50, ap = ap[:, 0], ap.mean(1)  # AP@0.5, AP@0.5:0.95
             mp, mr, map50, map = p.mean(), r.mean(), ap50.mean(), ap.mean()
-        nt = np.bincount(stats[3].astype(int), minlength=nc)  # number of targets per class
+        nt = np.bincount(stats[3].astype(int), minlength=self.nc)  # number of targets per class
 
         # Print results
         pf = "%22s" + "%11i" * 2 + "%11.3g" * 4  # print format
@@ -280,7 +290,7 @@ class BaseValidator:
             LOGGER.warning(f"WARNING ⚠️ no labels found in {task} set, can not compute metrics without labels")
 
         # Print results per class
-        if (self.args.verbose or (nc < 50 and not training)) and nc > 1 and len(stats):
+        if (self.args.verbose or (self.nc < 50 and not training)) and self.nc > 1 and len(stats):
             for i, c in enumerate(ap_class):
                 LOGGER.info(pf % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i]))
 
@@ -314,7 +324,7 @@ class BaseValidator:
                 anno = COCO(anno_json)  # init annotations api
                 pred = anno.loadRes(pred_json)  # init predictions api
                 eval = COCOeval(anno, pred, "bbox")
-                if is_coco:
+                if self.is_coco:
                     eval.params.imgIds = [int(Path(x).stem) for x in dataloader.dataset.im_files]  # image IDs to evaluate
                 eval.evaluate()
                 eval.accumulate()
@@ -328,10 +338,14 @@ class BaseValidator:
         if not training:
             s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if self.args.save_txt else ""
             LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}{s}")
-        maps = np.zeros(nc) + map
+        maps = np.zeros(self.nc) + map
         for i, c in enumerate(ap_class):
             maps[c] = ap[i]
         return (mp, mr, map50, map, *(loss.cpu() / len(dataloader)).tolist()), maps, t
+    
+    def on_plot(self, name, data=None):
+        """Registers plots (e.g. to be consumed in callbacks)"""
+        self.plots[Path(name)] = {'data': data, 'timestamp': time.time()}
 
     def plot_val_study(self, x):
         """

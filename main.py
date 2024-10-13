@@ -1,6 +1,6 @@
 import warnings
-from ultralytics.cfg import get_cfg
-from ultralytics.utils import DEFAULT_CFG
+from config import get_cfg
+from utils import DEFAULT_CFG
 from validation_sahi import run_sahi_validation, run_basic_validation, LOGGER
 from inference_sahi import run_sahi_prediction, run_basic_prediction
 import torch

@@ -46,19 +46,29 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 class BaseValidator:
     def __init__(self, args=None, save_dir=Path(""), model=None, dataloader=None):
         self.args = args
-        self.callbacks = Callbacks()
-        self.model = model
-        self.dataloader = dataloader
         self.save_dir = save_dir
+        self.dataloader = dataloader
+        self.callbacks = Callbacks()
 
         self.is_coco = False
-        self.nc = 0
         self.iouv = None
         self.niou = 0
         self.cuda = False
 
         self.plots = {}
         self.metrics = DetMetrics(save_dir=self.save_dir, on_plot=self.on_plot)
+
+        if model is not None:
+            self.model = torch.hub.load(model, "yolov5s", source="local", path=self.args.model, force_reload=True)
+        else:
+            self.model = torch.hub.load("ultralytics/yolov5", "yolov5s", source="github", force_reload=True)
+
+        self.model.half() if self.args.half else self.model.float()
+        self.names = self.model.module.names if hasattr(self.model, "module") else self.model.names
+        if self.names:
+            self.nc = len(self.names)
+        elif self.args.single_cls:
+            self.nc = 1
 
         self._validate_options()
 
@@ -128,7 +138,7 @@ class BaseValidator:
         subprocess.run(["zip", "-r", "study.zip", "study_*.txt"])
         self.plot_val_study(x=x)
 
-    def run_model(self, plots=True):
+    def run_model(self, plots=True, trainer=False):
         """
         Run the model with the current options.
 
@@ -143,11 +153,11 @@ class BaseValidator:
             LOGGER.info(f"{k}: {v}")
 
         # Initialize/load model and set device
-        training = self.model is not None
+        training = trainer is not None
         if training:  # called by train.py
-            device, pt, jit, engine = next(self.model.parameters()).device, True, False, False  # get model device, PyTorch model
+            device, pt, jit, engine = next(trainer.parameters()).device, True, False, False  # get model device, PyTorch model
             half &= device.type != "cpu"  # half precision only supported on CUDA
-            self.model.half() if half else self.model.float()
+            trainer.half() if half else trainer.float()
         else:  # called directly
             device = select_device(self.args.device, batch_size=batch_size)
 
@@ -156,14 +166,14 @@ class BaseValidator:
             (save_dir / "labels" if self.args.save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
             # Load model
-            model = DetectMultiBackend(self.args.weights, device=device, dnn=self.args.dnn, data=self.args.data, fp16=self.args.half)
-            stride, pt, jit, engine = model.stride, model.pt, model.jit, model.engine
+            self.model = DetectMultiBackend(self.args.weights, device=device, dnn=self.args.dnn, data=self.args.data, fp16=self.args.half)
+            stride, pt, jit, engine = self.model.stride, self.model.pt, self.model.jit, self.model.engine
             imgsz = check_img_size(self.args.imgsz, s=stride)  # check image size
-            half = model.fp16  # FP16 supported on limited backends with CUDA
+            half = self.model.fp16  # FP16 supported on limited backends with CUDA
             if engine:
-                batch_size = model.batch_size
+                batch_size = self.model.batch_size
             else:
-                device = model.device
+                device = self.model.device
                 if not (pt or jit):
                     batch_size = 1  # export.py models default to batch-size 1
                     LOGGER.info(f"Forcing --batch-size 1 square inference (1,3,{imgsz},{imgsz}) for non-PyTorch models")
@@ -172,22 +182,23 @@ class BaseValidator:
             data = check_dataset(data)  # check
 
         # Configure
-        model.eval()
+        self.model.eval()
         self.cuda = device.type != "cpu"
         self.is_coco = isinstance(data.get("val"), str) and data["val"].endswith(f"coco{os.sep}val2017.txt")  # COCO dataset
-        self.nc = 1 if self.args.single_cls else int(data["nc"])  # number of classes
+        if self.nc is None:
+            self.nc = int(data["nc"])  # number of classes
         self.iouv = torch.linspace(0.5, 0.95, 10, device=device)  # iou vector for mAP@0.5:0.95
         self.niou = self.iouv.numel()
 
         # Dataloader
         if not training:
             if pt and not self.args.single_cls:  # check --weights are trained on --data
-                ncm = model.model.nc
+                ncm = self.model.model.nc
                 assert ncm == self.nc, (
                     f"{self.args.weights} ({ncm} classes) trained on different --data than what you passed ({self.nc} "
                     f"classes). Pass correct combination of --weights and --data that are trained together."
                 )
-            model.warmup(imgsz=(1 if pt else batch_size, 3, imgsz, imgsz))  # warmup
+            self.model.warmup(imgsz=(1 if pt else batch_size, 3, imgsz, imgsz))  # warmup
             pad, rect = (0.0, False) if task == "speed" else (0.5, pt)  # square inference for benchmarks
             task = task if task in ("train", "val", "test") else "val"  # path to train/val/test images
             dataloader = create_dataloader(
@@ -204,7 +215,7 @@ class BaseValidator:
 
         seen = 0
         confusion_matrix = ConfusionMatrix(nc=self.nc)
-        names = model.names if hasattr(model, "names") else model.module.names  # get class names
+        names = self.model.names if hasattr(self.model, "names") else self.model.module.names  # get class names
         if isinstance(names, (list, tuple)):  # old format
             names = dict(enumerate(names))
         class_map = coco80_to_coco91_class() if self.is_coco else list(range(1000))
@@ -227,7 +238,7 @@ class BaseValidator:
 
             # Inference
             with dt[1]:
-                preds, train_out = model(im) if self.args.compute_loss else (model(im, augment=self.args.augment), None)
+                preds, train_out = self.model(im) if self.args.compute_loss else (self.model(im, augment=self.args.augment), None)
 
             # Loss
             if self.args.compute_loss:
@@ -346,7 +357,7 @@ class BaseValidator:
                 LOGGER.info(f"pycocotools unable to run: {e}")
 
         # Return results
-        model.float()  # for training
+        self.model.float()  # for training
         if not training:
             s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if self.args.save_txt else ""
             LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}{s}")

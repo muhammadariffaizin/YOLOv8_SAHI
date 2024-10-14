@@ -30,7 +30,10 @@ def main():
     predict_source = args.source
 
     # defaults params
-    config = get_cfg(cfg=DEFAULT_CFG)
+    if args.conf_file:
+        config = get_cfg(cfg=args.conf_file)
+    else:
+        config = get_cfg(cfg=DEFAULT_CFG)
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
     LOGGER.info(f'DEVICE ===>> {device}')
     print(imgsz)

@@ -73,12 +73,9 @@ from sahi.predict import get_sliced_prediction
 
 class DetectionValidator_SAHI(BaseValidator):
     def __init__(self, args=None, save_dir=Path(""), model=None, dataloader=None):
-        super().__init__(args, save_dir)
-        self.args = args
-        self.callbacks = Callbacks()
-        self.model = model
-        self.dataloader = dataloader
-        self.save_dir = save_dir
+        super().__init__(args, save_dir, model, dataloader)
+        
+        self._validate_options()
         
 
     def run_model(self, plots=True):
@@ -318,21 +315,16 @@ class DetectionPredictor_SAHI:
 
 def compile_validator(args, pt_modelpath, yaml_datapath, save_dir, imgsz = None, sahi = False, usual_inference=True):
     args.model = pt_modelpath
+    args.weights = pt_modelpath
     args.data = yaml_datapath
     args.imgsz = imgsz
 
-    validator = DetectionValidator_SAHI(args=args,save_dir=save_dir) if sahi else DetectionValidator(args=args,save_dir=save_dir)
+    if sahi:
+        validator = DetectionValidator_SAHI(args=args, save_dir=save_dir, model=pt_modelpath)
+    else:
+        validator = DetectionValidator(args=args, save_dir=save_dir, model=pt_modelpath)
     validator.is_coco = False
     validator.training = False
-
-    model = torch.hub.load('ultralytics/yolov5', 'custom', path=validator.args.model, force_reload=True)
-
-    # Apply half precision if requested
-    model.half() if validator.args.half else model.float()
-
-    # Set validator parameters
-    validator.names = model.names
-    validator.nc = len(model.names)
 
     # Load dataset configuration
     validator.data = check_dataset(validator.args.data)
@@ -345,7 +337,7 @@ def compile_validator(args, pt_modelpath, yaml_datapath, save_dir, imgsz = None,
     validator.metrics.names = validator.names
     validator.metrics.plot = validator.args.plots
 
-    validator.stride = model.stride
+    validator.stride = validator.model.stride
     LOGGER.info(f'\nValidator {"SAHI" if sahi else ""} compiled successfully!')
     return validator
 

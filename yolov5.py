@@ -33,7 +33,7 @@ from utils.metrics import ConfusionMatrix, ap_per_class
 from utils.plots import output_to_target, plot_images, plot_val_study
 from utils.torch_utils import select_device, smart_inference_mode
 
-from utils.metrics import box_iou
+from utils.metrics import box_iou, DetMetrics
 from utils.callbacks import Callbacks
 from validator import BaseValidator
 
@@ -45,12 +45,7 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 class DetectionValidator(BaseValidator):
     def __init__(self, args=None, save_dir=Path(""), model=None, dataloader=None):
-        super().__init__(args, save_dir)
-        self.args = args
-        self.callbacks = Callbacks()
-        self.model = model
-        self.dataloader = dataloader
-        self.save_dir = save_dir
+        super().__init__(args, save_dir, model, dataloader)
 
         self._validate_options()
 
@@ -117,7 +112,7 @@ class DetectionValidator(BaseValidator):
         subprocess.run(["zip", "-r", "study.zip", "study_*.txt"])
         self.plot_val_study(x=x)
 
-    def run_model(self, plots=True):
+    def run_model(self, plots=True, trainer=False):
         """
         Run the model with the current options.
 
@@ -132,11 +127,11 @@ class DetectionValidator(BaseValidator):
             LOGGER.info(f"{k}: {v}")
 
         # Initialize/load model and set device
-        training = self.model is not None
+        training = trainer is not None
         if training:  # called by train.py
-            device, pt, jit, engine = next(self.model.parameters()).device, True, False, False  # get model device, PyTorch model
+            device, pt, jit, engine = next(trainer.parameters()).device, True, False, False  # get model device, PyTorch model
             half &= device.type != "cpu"  # half precision only supported on CUDA
-            self.model.half() if half else self.model.float()
+            trainer.half() if half else trainer.float()
         else:  # called directly
             device = select_device(self.args.device, batch_size=self.args.batch_size)
 

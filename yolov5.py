@@ -49,20 +49,6 @@ class DetectionValidator(BaseValidator):
 
         self._validate_options()
 
-    def _validate_options(self):
-        """
-        Validates and adjusts the configuration options.
-        """
-        if self.args.conf_thres > 0.001:
-            LOGGER.warning(f"WARNING ⚠️ confidence threshold {self.args.conf_thres} > 0.001 produces invalid results")
-        if self.args.save_hybrid:
-            LOGGER.warning("WARNING ⚠️ --save-hybrid will return high mAP from hybrid labels, not from predictions alone")
-        self.args.save_json |= self.args.data.endswith("coco.yaml")
-        self.args.save_txt |= self.args.save_hybrid
-
-        if not self.args.project:
-            self.args.project = ROOT / "runs/val"  # default project dir
-
     def run_task(self):
         """
         Run the appropriate task ('train', 'val', 'test', 'speed', 'study') based on the configured options.
@@ -112,7 +98,7 @@ class DetectionValidator(BaseValidator):
         subprocess.run(["zip", "-r", "study.zip", "study_*.txt"])
         self.plot_val_study(x=x)
 
-    def run_model(self, plots=True, trainer=False):
+    def run_model(self, plots=True, trainer=None):
         """
         Run the model with the current options.
 
@@ -122,9 +108,9 @@ class DetectionValidator(BaseValidator):
         # Here the actual model inference logic goes, for example:
         # model = torch.load(self.weights[0])
         # result = model(img)
-        LOGGER.info("Model running with the following options:")
-        for k, v in self.args.__dict__.items():
-            LOGGER.info(f"{k}: {v}")
+        # LOGGER.info("Model running with the following options:")
+        # for k, v in self.args.__dict__.items():
+        #     LOGGER.info(f"{k}: {v}")
 
         # Initialize/load model and set device
         training = trainer is not None
@@ -145,54 +131,67 @@ class DetectionValidator(BaseValidator):
             imgsz = check_img_size(self.args.imgsz, s=stride)  # check image size
             half = self.model.fp16  # FP16 supported on limited backends with CUDA
             if engine:
-                batch_size = self.model.batch_size
+                self.batch_size = self.model.batch_size
             else:
                 device = self.model.device
                 if not (pt or jit):
-                    batch_size = 1  # export.py models default to batch-size 1
+                    self.batch_size = 1  # export.py models default to batch-size 1
                     LOGGER.info(f"Forcing --batch-size 1 square inference (1,3,{imgsz},{imgsz}) for non-PyTorch models")
+                else:
+                    self.batch_size = self.args.batch_size
 
             # Data
             data = check_dataset(self.data)  # check
 
         # Configure
         self.model.eval()
-        cuda = device.type != "cpu"
-        is_coco = isinstance(data.get("val"), str) and data["val"].endswith(f"coco{os.sep}val2017.txt")  # COCO dataset
-        nc = 1 if self.args.single_cls else int(data["nc"])  # number of classes
-        iouv = torch.linspace(0.5, 0.95, 10, device=device)  # iou vector for mAP@0.5:0.95
-        niou = iouv.numel()
+        self.cuda = device.type != "cpu"
+        self.is_coco = isinstance(data.get("val"), str) and data["val"].endswith(f"coco{os.sep}val2017.txt")  # COCO dataset
+        self.model.half() if self.args.half else self.model.float()
+        self.names = self.model.module.names if hasattr(self.model, "module") else self.model.names
+        if self.names:
+            self.nc = len(self.names)
+        elif self.args.single_cls:
+            self.nc = 1
+        else:
+            self.nc = int(data["nc"])  # number of classes
+        self.iouv = torch.linspace(0.5, 0.95, 10, device=device)  # iou vector for mAP@0.5:0.95
+        self.niou = self.iouv.numel()
+        self.stride = self.model.stride
+
+        # Set metrics
+        self.metrics.names = self.names
+        self.metrics.plot = self.args.plots
 
         # Dataloader
         if not training:
             if pt and not self.args.single_cls:  # check --weights are trained on --data
                 ncm = self.model.model.nc
-                print(self.model.model.nc)
-                assert ncm == nc, (
-                    f"{self.args.weights} ({ncm} classes) trained on different --data than what you passed ({nc} "
+                assert ncm == self.nc, (
+                    f"{self.args.weights} ({ncm} classes) trained on different --data than what you passed ({self.nc} "
                     f"classes). Pass correct combination of --weights and --data that are trained together."
                 )
-            self.model.warmup(imgsz=(1 if pt else batch_size, 3, imgsz, imgsz))  # warmup
-            pad, rect = (0.0, False) if task == "speed" else (0.5, pt)  # square inference for benchmarks
-            task = task if task in ("train", "val", "test") else "val"  # path to train/val/test images
+            self.model.warmup(imgsz=(1 if pt else self.batch_size, 3, imgsz, imgsz))  # warmup
+            pad, rect = (0.0, False) if self.task == "speed" else (0.5, pt)  # square inference for benchmarks
+            self.task = self.task if self.task in ("train", "val", "test") else "val"  # path to train/val/test images
             dataloader = create_dataloader(
-                data[task],
+                data[self.task],
                 imgsz,
-                batch_size,
+                self.batch_size,
                 stride,
                 self.args.single_cls,
                 pad=pad,
                 rect=rect,
                 workers=self.args.workers,
-                prefix=colorstr(f"{task}: "),
+                prefix=colorstr(f"{self.task}: "),
             )[0]
 
         seen = 0
-        confusion_matrix = ConfusionMatrix(nc=nc)
+        confusion_matrix = ConfusionMatrix(nc=self.nc)
         names = self.model.names if hasattr(self.model, "names") else self.model.module.names  # get class names
         if isinstance(names, (list, tuple)):  # old format
             names = dict(enumerate(names))
-        class_map = coco80_to_coco91_class() if is_coco else list(range(1000))
+        class_map = coco80_to_coco91_class() if self.is_coco else list(range(1000))
         s = ("%22s" + "%11s" * 6) % ("Class", "Images", "Instances", "P", "R", "mAP50", "mAP50-95")
         tp, fp, p, r, f1, mp, mr, map50, ap50, map = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
         dt = Profile(device=device), Profile(device=device), Profile(device=device)  # profiling times
@@ -203,7 +202,7 @@ class DetectionValidator(BaseValidator):
         for batch_i, (im, targets, paths, shapes) in enumerate(pbar):
             self.callbacks.run("on_val_batch_start")
             with dt[0]:
-                if cuda:
+                if self.cuda:
                     im = im.to(device, non_blocking=True)
                     targets = targets.to(device)
                 im = im.half() if half else im.float()  # uint8 to fp16/32
@@ -231,7 +230,7 @@ class DetectionValidator(BaseValidator):
                 labels = targets[targets[:, 0] == si, 1:]
                 nl, npr = labels.shape[0], pred.shape[0]  # number of labels, predictions
                 path, shape = Path(paths[si]), shapes[si][0]
-                correct = torch.zeros(npr, niou, dtype=torch.bool, device=device)  # init
+                correct = torch.zeros(npr, self.niou, dtype=torch.bool, device=device)  # init
                 seen += 1
 
                 if npr == 0:
@@ -252,7 +251,7 @@ class DetectionValidator(BaseValidator):
                     tbox = xywh2xyxy(labels[:, 1:5])  # target boxes
                     scale_boxes(im[si].shape[1:], tbox, shape, shapes[si][1])  # native-space labels
                     labelsn = torch.cat((labels[:, 0:1], tbox), 1)  # native-space labels
-                    correct = self._process_batch(predn, labelsn, iouv)
+                    correct = self._process_batch(predn, labelsn, self.iouv)
                     if plots:
                         confusion_matrix.process_batch(predn, labelsn)
                 stats.append((correct, pred[:, 4], pred[:, 5], labels[:, 0]))  # (correct, conf, pcls, tcls)
@@ -278,23 +277,23 @@ class DetectionValidator(BaseValidator):
             tp, fp, p, r, f1, ap, ap_class = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names)
             ap50, ap = ap[:, 0], ap.mean(1)  # AP@0.5, AP@0.5:0.95
             mp, mr, map50, map = p.mean(), r.mean(), ap50.mean(), ap.mean()
-        nt = np.bincount(stats[3].astype(int), minlength=nc)  # number of targets per class
+        nt = np.bincount(stats[3].astype(int), minlength=self.nc)  # number of targets per class
 
         # Print results
         pf = "%22s" + "%11i" * 2 + "%11.3g" * 4  # print format
         LOGGER.info(pf % ("all", seen, nt.sum(), mp, mr, map50, map))
         if nt.sum() == 0:
-            LOGGER.warning(f"WARNING ⚠️ no labels found in {task} set, can not compute metrics without labels")
+            LOGGER.warning(f"WARNING ⚠️ no labels found in {self.task} set, can not compute metrics without labels")
 
         # Print results per class
-        if (self.args.verbose or (nc < 50 and not training)) and nc > 1 and len(stats):
+        if (self.args.verbose or (self.nc < 50 and not training)) and self.nc > 1 and len(stats):
             for i, c in enumerate(ap_class):
                 LOGGER.info(pf % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i]))
 
         # Print speeds
         t = tuple(x.t / seen * 1e3 for x in dt)  # speeds per image
         if not training:
-            shape = (batch_size, 3, imgsz, imgsz)
+            shape = (self.batch_size, 3, imgsz, imgsz)
             LOGGER.info(f"Speed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {shape}" % t)
 
         # Plots
@@ -321,7 +320,7 @@ class DetectionValidator(BaseValidator):
                 anno = COCO(anno_json)  # init annotations api
                 pred = anno.loadRes(pred_json)  # init predictions api
                 eval = COCOeval(anno, pred, "bbox")
-                if is_coco:
+                if self.is_coco:
                     eval.params.imgIds = [int(Path(x).stem) for x in dataloader.dataset.im_files]  # image IDs to evaluate
                 eval.evaluate()
                 eval.accumulate()
@@ -335,7 +334,7 @@ class DetectionValidator(BaseValidator):
         if not training:
             s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if self.args.save_txt else ""
             LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}{s}")
-        maps = np.zeros(nc) + map
+        maps = np.zeros(self.nc) + map
         for i, c in enumerate(ap_class):
             maps[c] = ap[i]
         return (mp, mr, map50, map, *(loss.cpu() / len(dataloader)).tolist()), maps, t

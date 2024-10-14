@@ -10,7 +10,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Ultralytics YOLOv5')
     parser.add_argument('--weights', type=str, default='yolov5s.pt', help='model.pt path(s)')
     parser.add_argument('--imgsz', '--img', '--img-size', type=int, help='inference size (pixels)')
-    parser.add_argument('--conf-file', type=str, default='data/coco.yaml', help='hyp.yaml file path')
+    parser.add_argument('--data-config', type=str, default='data/coco.yaml', help='hyp.yaml file path')
+    parser.add_argument('--config', type=str, default=None, help='config file path')
     parser.add_argument('--source', type=str, default='data/images', help='source')  # file/folder, 0 for webcam
     parser.add_argument('--mode', type=str, default='predict', help='select mode for valid or predict', choices=['predict', 'valid'])
 
@@ -25,13 +26,13 @@ def main():
     if args.imgsz == None:
         imgsz = None
     else:
-        imgsz = (args.imgsz, args.imgsz) # (height, width) tuple
-    yaml_datapath = args.conf_file
+        imgsz = args.imgsz
+    yaml_datapath = args.data_config
     predict_source = args.source
 
     # defaults params
-    if args.conf_file:
-        config = get_cfg(cfg=args.conf_file)
+    if args.config:
+        config = get_cfg(cfg=args.config)
     else:
         config = get_cfg(cfg=DEFAULT_CFG)
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')

@@ -248,7 +248,7 @@ class DetectionValidator_SAHI(BaseValidator):
                     f"classes). Pass correct combination of --weights and --data that are trained together."
                 )
             self.model.warmup(imgsz=(1 if pt else self.batch_size, 3, imgsz, imgsz))  # warmup
-            pad, rect = (0.0, False) if self.task == "speed" else (0.5, pt)  # square inference for benchmarks
+            pad, rect = (0.0, False) if self.task == "val" else (0.5, pt)  # square inference for benchmarks
             self.task = self.task if self.task in ("train", "val", "test") else "val"  # path to train/val/test images
             dataloader = create_dataloader(
                 data[self.task],
@@ -307,9 +307,6 @@ class DetectionValidator_SAHI(BaseValidator):
                 im_sahi = v2.Resize(size=(slice_h, slice_w))(im_sahi) # image for not-sahi inference
                 from_shape = im_sahi.shape[2:]
                 to_shape = im.shape[2:]
-
-                print("from shape ", from_shape)
-                print("to shape ", to_shape)
 
             # Inference
             with dt[1]:

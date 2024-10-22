@@ -314,24 +314,19 @@ class DetectionValidator_SAHI(BaseValidator):
             # Inference
             with dt[1]:
                 if self.usual_inference:
-                    print("self model nc: ", len(self.model.names))
                     preds, train_out = self.model(im_sahi) if self.args.compute_loss else (self.model(im_sahi, augment=self.args.augment), None)
                     w_gain, h_gain = (
                         to_shape[1] / from_shape[1],
                         to_shape[0] / from_shape[0],
                     )
-                    print("0 preds: ", len(preds[0]))
                     if isinstance(preds, (list, tuple)):
-                        print("1 preds: ", preds[0].shape)
                         transposed = preds[0]
                         for box in transposed[..., :4]:
                             box[:, 0] *= w_gain
                             box[:, 1] *= h_gain
                             box[:, 2] *= w_gain
                             box[:, 3] *= h_gain
-                        print("2 preds: ", transposed.shape)
                         scaled_xywh = transposed.transpose(-1, -2)
-                        print("3 preds: ", scaled_xywh.shape)
                         preds[0] = scaled_xywh
                     else:
                         transposed = preds
@@ -342,21 +337,14 @@ class DetectionValidator_SAHI(BaseValidator):
                             box[:, 3] *= h_gain
                         scaled_xywh = transposed.transpose(-1, -2)
                         preds = scaled_xywh
-                    print("4 preds: ", len(preds))
-                    print("4 preds example shape: ", preds[0].shape)
-                    print("4 example preds: ", preds[0][0][0])
                 if self.sahi:
                     preds_sahi = self.sahi_inference(im=im_sahi, slice_height=slice_h, slice_width=slice_w, augment=False)
                     preds_sahi = preds_sahi.transpose(-1, -2)
-                    print("5 preds_sahi: ", len(preds_sahi))
-                    print("5 preds_sahi example shape: ", preds_sahi[0].shape)
                 if self.sahi and self.usual_inference:
                     if isinstance(preds, (list, tuple)):
                         preds[0] = torch.cat((preds[0], preds_sahi), dim=2)
                     else:
                         preds = torch.cat((preds, preds_sahi), dim=2)
-                    print("6 preds: ", len(preds))
-                    print("6 preds example shape: ", preds[0].shape)
 
             # Loss
             if self.args.compute_loss:
@@ -372,14 +360,9 @@ class DetectionValidator_SAHI(BaseValidator):
                     preds[0] = preds[0].transpose(-1, -2)
                 else:
                     preds = preds.transpose(-1, -2)
-                print("0 - predn shape: ", len(preds))
-                print("0 - example predn: ", preds[0])
-                print("0 - example predn shape: ", preds[0].shape)
                 preds = non_max_suppression(
                     preds, self.args.conf_thres, self.args.iou_thres, labels=lb, multi_label=True, agnostic=self.args.single_cls, max_det=self.args.max_det
                 )
-            print("1 - predn shape: ", len(preds))
-            print("1 - example predn: ", preds[0])
 
             # Metrics
             for si, pred in enumerate(preds):
@@ -400,20 +383,12 @@ class DetectionValidator_SAHI(BaseValidator):
                 if self.args.single_cls:
                     pred[:, 5] = 0
                 predn = pred.clone()
-                print("2 - predn shape: ", predn.shape)
-                print("2 - example predn: ", predn[0])
                 scale_boxes(im_sahi[si].shape[1:], predn[:, :4], shape, shapes[si][1])  # native-space pred
-                print("3 - predn shape: ", predn.shape)
-                print("3 - example predn: ", predn[0])
 
                 # Evaluate
                 if nl:
                     tbox = xywh2xyxy(labels[:, 1:5])  # target boxes
-                    print("4 - predn shape: ", predn.shape)
-                    print("4 - example predn: ", predn[0])
                     scale_boxes(im_sahi[si].shape[1:], tbox, shape, shapes[si][1])  # native-space labels
-                    print("5 - predn shape: ", predn.shape)
-                    print("5 - example predn: ", predn[0])
                     labelsn = torch.cat((labels[:, 0:1], tbox), 1)  # native-space labels
                     correct = self._process_batch(predn, labelsn, self.iouv)
                     if plots:

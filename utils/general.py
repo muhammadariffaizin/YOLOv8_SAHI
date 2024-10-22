@@ -1038,7 +1038,6 @@ def non_max_suppression(
     bs = prediction.shape[0]  # batch size
     nc = prediction.shape[2] - nm - 5  # number of classes
     xc = prediction[..., 4] > conf_thres  # candidates
-    print(f"Prediction shape: {prediction.shape}")
 
     # Settings
     # min_wh = 2  # (pixels) minimum box width and height
@@ -1081,16 +1080,13 @@ def non_max_suppression(
         if multi_label:
             i, j = (x[:, 5:mi] > conf_thres).nonzero(as_tuple=False).T
             x = torch.cat((box[i], x[i, 5 + j, None], j[:, None].float(), mask[i]), 1)
-            print(f"Image {xi}: Multi-label assigned class indices range: {j.min().item()} to {j.max().item()}")
         else:  # best class only
             conf, j = x[:, 5:mi].max(1, keepdim=True)
             x = torch.cat((box, conf, j.float(), mask), 1)[conf.view(-1) > conf_thres]
-            print(f"Image {xi}: Single-label assigned class indices range: {j.min().item()} to {j.max().item()}")
 
         # Filter by class
         if classes is not None:
             x = x[(x[:, 5:6] == torch.tensor(classes, device=x.device)).any(1)]
-            print(f"Image {xi}: Detections after class filtering: {x.shape[0]}")
 
         # Apply finite constraint
         # if not torch.isfinite(x).all():

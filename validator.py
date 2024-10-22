@@ -385,6 +385,10 @@ class BaseValidator:
         # Here you would add code to plot the study results
         LOGGER.info(f"Plotting study results for {x}")
 
+    def plot_val_samples(self, batch, ni):
+        """Plots validation samples during training."""
+        pass
+
     def save_one_txt(self, predn, save_conf, shape, file):
         """
         Saves one detection result to a txt file in normalized xywh format, optionally including confidence.

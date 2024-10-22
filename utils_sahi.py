@@ -21,6 +21,7 @@ Usage - formats:
 
 import argparse
 import json
+import cv2
 import os
 import subprocess
 import sys
@@ -71,6 +72,21 @@ from yolov5 import DetectionValidator, DetectionPredictor
 from sahi.slicing import get_slice_bboxes
 from sahi import AutoDetectionModel
 from sahi.predict import get_sliced_prediction
+
+def save_image_with_predictions(image, predictions, save_path):
+    image = image[0].permute(1, 2, 0).cpu().numpy() * 255
+    predictions = predictions.cpu().numpy()
+    image = image.astype(np.uint8)
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    for box in predictions:
+        xyxy = box[2:]
+        x1, y1, x2, y2 = xyxy.tolist()
+        x1 = int(x1 * image.shape[1])
+        x2 = int(x2 * image.shape[1])
+        y1 = int(y1 * image.shape[0])
+        y2 = int(y2 * image.shape[0])
+        cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    cv2.imwrite(save_path, image)
 
 class DetectionValidator_SAHI(BaseValidator):
     def __init__(self, args=None, save_dir=Path(""), model=None, dataloader=None):
@@ -275,8 +291,8 @@ class DetectionValidator_SAHI(BaseValidator):
                 self.model.warmup(imgsz=(1 if pt else self.args.batch, 3, slice_h, slice_w))
                 # slice_h, slice_w = self.compute_window_shape(self.imgsz, window_shape=[SLICE_H, SLICE_W])
 
-            # if self.args.plots and batch_i < 3:
-            #     self.plot_val_samples((im, targets, paths, shapes), batch_i)
+            if self.args.plots and batch_i < 3:
+                self.plot_val_samples((im, targets, paths, shapes), batch_i)
 
             self.callbacks.run("on_val_batch_start")
             with dt[0]:
@@ -287,34 +303,38 @@ class DetectionValidator_SAHI(BaseValidator):
                 im /= 255  # 0 - 255 to 0.0 - 1.0
                 nb, _, height, width = im.shape  # batch size, channels, height, width
 
-                im_sahi = im.copy()
+                im_sahi = im.clone()
                 im_sahi = v2.Resize(size=(slice_h, slice_w))(im_sahi) # image for not-sahi inference
                 from_shape = im_sahi.shape[2:]
                 to_shape = im.shape[2:]
 
+                print("from shape ", from_shape)
+                print("to shape ", to_shape)
+
             # Inference
             with dt[1]:
                 if self.usual_inference:
+                    print("self model nc: ", len(self.model.names))
                     preds, train_out = self.model(im_sahi) if self.args.compute_loss else (self.model(im_sahi, augment=self.args.augment), None)
                     w_gain, h_gain = (
                         to_shape[1] / from_shape[1],
                         to_shape[0] / from_shape[0],
                     )
+                    print("0 preds: ", len(preds[0]))
                     if isinstance(preds, (list, tuple)):
-                        transposed = preds[0].transpose(
-                            -1, -2
-                        )  # preds in xywh for torch.Size([640, 640])
+                        print("1 preds: ", preds[0].shape)
+                        transposed = preds[0]
                         for box in transposed[..., :4]:
                             box[:, 0] *= w_gain
                             box[:, 1] *= h_gain
                             box[:, 2] *= w_gain
                             box[:, 3] *= h_gain
+                        print("2 preds: ", transposed.shape)
                         scaled_xywh = transposed.transpose(-1, -2)
+                        print("3 preds: ", scaled_xywh.shape)
                         preds[0] = scaled_xywh
                     else:
-                        transposed = preds.transpose(
-                            -1, -2
-                        )  # preds in xywh for torch.Size([640, 640])
+                        transposed = preds
                         for box in transposed[..., :4]:
                             box[:, 0] *= w_gain
                             box[:, 1] *= h_gain
@@ -322,13 +342,21 @@ class DetectionValidator_SAHI(BaseValidator):
                             box[:, 3] *= h_gain
                         scaled_xywh = transposed.transpose(-1, -2)
                         preds = scaled_xywh
+                    print("4 preds: ", len(preds))
+                    print("4 preds example shape: ", preds[0].shape)
+                    print("4 example preds: ", preds[0][0][0])
                 if self.sahi:
-                    preds_sahi = self.sahi_inference(im=im, slice_height=slice_h, slice_width=slice_w, augment=False)
+                    preds_sahi = self.sahi_inference(im=im_sahi, slice_height=slice_h, slice_width=slice_w, augment=False)
+                    preds_sahi = preds_sahi.transpose(-1, -2)
+                    print("5 preds_sahi: ", len(preds_sahi))
+                    print("5 preds_sahi example shape: ", preds_sahi[0].shape)
                 if self.sahi and self.usual_inference:
                     if isinstance(preds, (list, tuple)):
                         preds[0] = torch.cat((preds[0], preds_sahi), dim=2)
                     else:
                         preds = torch.cat((preds, preds_sahi), dim=2)
+                    print("6 preds: ", len(preds))
+                    print("6 preds example shape: ", preds[0].shape)
 
             # Loss
             if self.args.compute_loss:
@@ -340,9 +368,18 @@ class DetectionValidator_SAHI(BaseValidator):
             with dt[2]:
                 if not self.usual_inference:
                     preds = preds_sahi
+                if isinstance(preds, (list, tuple)):
+                    preds[0] = preds[0].transpose(-1, -2)
+                else:
+                    preds = preds.transpose(-1, -2)
+                print("0 - predn shape: ", len(preds))
+                print("0 - example predn: ", preds[0])
+                print("0 - example predn shape: ", preds[0].shape)
                 preds = non_max_suppression(
                     preds, self.args.conf_thres, self.args.iou_thres, labels=lb, multi_label=True, agnostic=self.args.single_cls, max_det=self.args.max_det
                 )
+            print("1 - predn shape: ", len(preds))
+            print("1 - example predn: ", preds[0])
 
             # Metrics
             for si, pred in enumerate(preds):
@@ -363,12 +400,20 @@ class DetectionValidator_SAHI(BaseValidator):
                 if self.args.single_cls:
                     pred[:, 5] = 0
                 predn = pred.clone()
-                scale_boxes(im[si].shape[1:], predn[:, :4], shape, shapes[si][1])  # native-space pred
+                print("2 - predn shape: ", predn.shape)
+                print("2 - example predn: ", predn[0])
+                scale_boxes(im_sahi[si].shape[1:], predn[:, :4], shape, shapes[si][1])  # native-space pred
+                print("3 - predn shape: ", predn.shape)
+                print("3 - example predn: ", predn[0])
 
                 # Evaluate
                 if nl:
                     tbox = xywh2xyxy(labels[:, 1:5])  # target boxes
-                    scale_boxes(im[si].shape[1:], tbox, shape, shapes[si][1])  # native-space labels
+                    print("4 - predn shape: ", predn.shape)
+                    print("4 - example predn: ", predn[0])
+                    scale_boxes(im_sahi[si].shape[1:], tbox, shape, shapes[si][1])  # native-space labels
+                    print("5 - predn shape: ", predn.shape)
+                    print("5 - example predn: ", predn[0])
                     labelsn = torch.cat((labels[:, 0:1], tbox), 1)  # native-space labels
                     correct = self._process_batch(predn, labelsn, self.iouv)
                     if plots:

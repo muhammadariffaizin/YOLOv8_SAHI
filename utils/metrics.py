@@ -151,6 +151,14 @@ class ConfusionMatrix:
         detections = detections[detections[:, 4] > self.conf]
         gt_classes = labels[:, 0].int()
         detection_classes = detections[:, 5].int()
+
+        print(f"Number of detections after filtering: {detections.shape[0]}")
+        print(f"Detection classes (unique): {detection_classes.unique()}")
+
+        # Check for out-of-bound class indices
+        if detection_classes.max() >= self.nc:
+            raise ValueError(f"Detected class index {detection_classes.max().item()} exceeds number of classes {self.nc}.")
+    
         iou = box_iou(labels[:, 1:], detections[:, :4])
 
         x = torch.where(iou > self.iou_thres)
@@ -166,12 +174,9 @@ class ConfusionMatrix:
 
         n = matches.shape[0] > 0
         m0, m1, _ = matches.transpose().astype(int)
-        print("matrix", len(self.matrix))
         for i, gc in enumerate(gt_classes):
             j = m0 == i
             if n and sum(j) == 1:
-                print("m1[j]", m1[j])
-                print("detection_classes[m1[j]]", detection_classes[m1[j]])
                 self.matrix[detection_classes[m1[j]], gc] += 1  # correct
             else:
                 self.matrix[self.nc, gc] += 1  # true background

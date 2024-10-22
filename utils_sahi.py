@@ -38,10 +38,6 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
-SLICE_H = 640 # any multiple by 32 number
-SLICE_W = 640
-OVERLAP_HEIGHT_RATIO = 0.2
-OVERLAP_WIDTH_RATIO = 0.2
 VERBOSE_SAHI = 0
 
 from models.common import DetectMultiBackend
@@ -97,7 +93,7 @@ class DetectionValidator_SAHI(BaseValidator):
         
         self._validate_options()
         
-    def compute_window_shape(self, orig_shape, window_shape=[SLICE_H, SLICE_W]):
+    def compute_window_shape(self, orig_shape, window_shape=[640, 640]):
         """
         - we need compile model in advance with appropriate image size (yolo modela require imgsize be multiple 32)
         - that function fix cases when inpur original resolution lower than required window-sahi size (for example 720 * 1080 == Yolo can't process 720 imgsize)
@@ -113,10 +109,10 @@ class DetectionValidator_SAHI(BaseValidator):
     def sahi_inference(
             self,
             im,
-            slice_height=SLICE_H,
-            slice_width=SLICE_W,
-            overlap_height_ratio=OVERLAP_HEIGHT_RATIO,
-            overlap_width_ratio=OVERLAP_WIDTH_RATIO,
+            slice_height=640,
+            slice_width=640,
+            overlap_height_ratio=0.2,
+            overlap_width_ratio=0.2,
             *args,
             **kwargs,
     ):
@@ -235,8 +231,10 @@ class DetectionValidator_SAHI(BaseValidator):
         self.metrics.names = self.names
         self.metrics.plot = self.args.plots
 
+        overlap_height_ratio = self.args.slice_overlap_height_ratio
+        overlap_width_ratio = self.args.slice_overlap_width_ratio
         if imgsz is not None:
-            slice_h, slice_w = self.compute_window_shape((imgsz,imgsz), window_shape=[SLICE_H, SLICE_W])
+            slice_h, slice_w = self.compute_window_shape((imgsz,imgsz), window_shape=[self.args.slice_height, self.args.slice_width])
             self.model.warmup(imgsz=(1 if pt else self.batch_size, 3, slice_h, slice_w))  # warmup
 
         # Dataloader
@@ -287,7 +285,7 @@ class DetectionValidator_SAHI(BaseValidator):
         for batch_i, (im, targets, paths, shapes) in enumerate(pbar):
             if self.args.imgsz is None: # must calculate window shape here foe original-sized prediction
                 imgsz = im.shape[2:]
-                slice_h, slice_w = self.compute_window_shape(imgsz, window_shape=[SLICE_H, SLICE_W])
+                slice_h, slice_w = self.compute_window_shape(imgsz, window_shape=[self.args.slice_height, self.args.slice_width])
                 self.model.warmup(imgsz=(1 if pt else self.args.batch, 3, slice_h, slice_w))
                 # slice_h, slice_w = self.compute_window_shape(self.imgsz, window_shape=[SLICE_H, SLICE_W])
 
@@ -335,7 +333,8 @@ class DetectionValidator_SAHI(BaseValidator):
                         scaled_xywh = transposed.transpose(-1, -2)
                         preds = scaled_xywh
                 if self.sahi:
-                    preds_sahi = self.sahi_inference(im=im_sahi, slice_height=slice_h, slice_width=slice_w, augment=False)
+                    preds_sahi = self.sahi_inference(im=im_sahi, slice_height=slice_h, slice_width=slice_w, augment=False, 
+                                                     overlap_height_ratio=overlap_height_ratio, overlap_width_ratio=overlap_width_ratio)
                     preds_sahi = preds_sahi.transpose(-1, -2)
                 if self.sahi and self.usual_inference:
                     if isinstance(preds, (list, tuple)):
@@ -524,8 +523,8 @@ def compile_predictor(args, pt_modelpath, save_dir, iou_thr = 0.5, conf = 0.5, i
 
     return predictor
 
-def sahi_predict(detection_model, image_batch, slice_height = SLICE_H, slice_width = SLICE_W, \
-                 overlap_height_ratio = OVERLAP_HEIGHT_RATIO, overlap_width_ratio = OVERLAP_WIDTH_RATIO):
+def sahi_predict(detection_model, image_batch, slice_height = 640, slice_width = 640, \
+                 overlap_height_ratio = 0.2, overlap_width_ratio = 0.2):
     """
     detection_model : compiled from def get_sahi_model()
     image_batch : torch.Size([10, 3, 1280, 1280])

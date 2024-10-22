@@ -126,3 +126,9 @@ cfg: # (str, optional) for overriding defaults.yaml
 
 # Tracker settings ------------------------------------------------------------------------------------------------------
 tracker: botsort.yaml # (str) tracker type, choices=[botsort.yaml, bytetrack.yaml]
+
+# SAHI settings ---------------------------------------------------------------------------------------------------------
+slice_width: 640 # (int) slice width for SAHI
+slice_height: 640 # (int) slice height for SAHI
+slice_overlap_width_ratio: 0.2 # (float) width overlap for SAHI
+slice_overlap_height_ratio: 0.2 # (float) height overlap for SAHI
